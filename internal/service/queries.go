@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -299,35 +300,57 @@ func (s *Service) GetManifest(ctx context.Context, batchID string) (*domain.Rele
 		s.manifests[batchID] = load
 	}
 	s.manifestMu.Unlock()
-	load.once.Do(func() {
-		batch, err := s.repository.GetBatch(ctx, batchID)
-		if err != nil {
-			load.err = err
-			return
+	load.mu.Lock()
+	defer load.mu.Unlock()
+	if load.loaded {
+		if load.err != nil {
+			return nil, load.err
 		}
-		if batch.Manifest == nil || batch.Status != domain.StatusPublished {
-			load.err = domain.ErrNotFound
-			return
-		}
-		manifest := *batch.Manifest
-		manifest.ClipEntries = append([]domain.ManifestClip(nil), batch.Manifest.ClipEntries...)
-		digest, err := domain.ManifestDigest(&manifest)
-		if err != nil {
-			load.err = err
-			return
-		}
-		if digest != manifest.SHA256Digest {
-			load.err = fmt.Errorf("%w: 清单摘要校验失败", domain.ErrIntegrity)
-			return
-		}
-		load.manifest = &manifest
-	})
-	if load.err != nil {
-		return nil, load.err
+		manifest := *load.manifest
+		manifest.ClipEntries = append([]domain.ManifestClip(nil), load.manifest.ClipEntries...)
+		return &manifest, nil
 	}
-	manifest := *load.manifest
+	batch, err := s.repository.GetBatch(ctx, batchID)
+	if err != nil {
+		if isTransientContextError(err) {
+			return nil, err
+		}
+		load.loaded = true
+		load.err = err
+		return nil, err
+	}
+	if batch.Manifest == nil || batch.Status != domain.StatusPublished {
+		load.loaded = true
+		load.err = domain.ErrNotFound
+		return nil, domain.ErrNotFound
+	}
+	manifest := *batch.Manifest
+	manifest.ClipEntries = append([]domain.ManifestClip(nil), batch.Manifest.ClipEntries...)
+	digest, err := domain.ManifestDigest(&manifest)
+	if err != nil {
+		if isTransientContextError(err) {
+			return nil, err
+		}
+		load.loaded = true
+		load.err = err
+		return nil, err
+	}
+	if digest != manifest.SHA256Digest {
+		err = fmt.Errorf("%w: 清单摘要校验失败", domain.ErrIntegrity)
+		load.loaded = true
+		load.err = err
+		return nil, err
+	}
+	load.loaded = true
+	load.manifest = &manifest
 	manifest.ClipEntries = append([]domain.ManifestClip(nil), load.manifest.ClipEntries...)
 	return &manifest, nil
+}
+
+// isTransientContextError 判定错误是否源自调用方上下文（取消或超时）。
+// 此类错误为瞬时错误，不应被清单缓存永久固化，否则后续正常请求会复用已失效的 context canceled 错误。
+func isTransientContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (s *Service) GetManifestPage(ctx context.Context, batchID string, offset, limit int) (*ManifestPage, error) {

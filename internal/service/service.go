@@ -10,7 +10,8 @@ import (
 )
 
 type manifestLoad struct {
-	once     sync.Once
+	mu       sync.Mutex
+	loaded   bool
 	manifest *domain.ReleaseManifest
 	err      error
 }
