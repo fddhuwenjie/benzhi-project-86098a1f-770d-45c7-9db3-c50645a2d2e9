@@ -1,7 +1,6 @@
 package service
 
 import (
-	"sync"
 	"time"
 
 	"bioacoustic-corpus-release/internal/audit"
@@ -13,8 +12,6 @@ type Service struct {
 	auditor     *audit.Builder
 	auditReader *audit.Reader
 	locks       *batchLocks
-	progressMu  sync.RWMutex
-	progress    map[string]*AnnotationProgress
 	now         func() time.Time
 }
 
@@ -25,6 +22,6 @@ func New(repository store.Repository, now func() time.Time) *Service {
 	return &Service{
 		repository: repository, auditor: audit.NewBuilder(now),
 		auditReader: audit.NewReader(repository), locks: newBatchLocks(),
-		progress: make(map[string]*AnnotationProgress), now: now,
+		now: now,
 	}
 }

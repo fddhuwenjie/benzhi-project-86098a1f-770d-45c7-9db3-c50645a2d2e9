@@ -241,16 +241,18 @@ func (s *Service) AnnotationProgress(ctx context.Context, batchID, actorID strin
 	if err := domain.ValidateID("actor_id", actorID); err != nil {
 		return nil, err
 	}
-	s.progressMu.RLock()
-	cached := cloneAnnotationProgress(s.progress[batchID])
-	s.progressMu.RUnlock()
-	if cached != nil {
-		return cached, nil
+	if err := domain.ValidateID("batch_id", batchID); err != nil {
+		return nil, err
 	}
 	b, err := s.repository.GetBatch(ctx, batchID)
 	if err != nil {
 		return nil, err
 	}
+	p := buildAnnotationProgress(b, actorID)
+	return cloneAnnotationProgress(p), nil
+}
+
+func buildAnnotationProgress(b *domain.CorpusBatch, actorID string) *AnnotationProgress {
 	p := &AnnotationProgress{ActorID: actorID, SampleCount: len(b.SampledClips()), PendingClipIDs: []string{}}
 	total := 0.0
 	for _, c := range b.SampledClips() {
@@ -274,10 +276,7 @@ func (s *Service) AnnotationProgress(ctx context.Context, batchID, actorID strin
 		p.DoubleLabelRate = float64(len(b.Annotations)) / float64(p.SampleCount*2)
 		p.OverallDoubleLabelRate = p.DoubleLabelRate
 	}
-	s.progressMu.Lock()
-	s.progress[batchID] = cloneAnnotationProgress(p)
-	s.progressMu.Unlock()
-	return cloneAnnotationProgress(p), nil
+	return p
 }
 
 func cloneAnnotationProgress(progress *AnnotationProgress) *AnnotationProgress {
